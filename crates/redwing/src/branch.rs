@@ -150,19 +150,18 @@ pub trait Branch {
 
     /// Create a new, empty branch forked from this one.
     ///
-    /// The returned branch accumulates its own independent delta log, but it
-    /// remains derived from `self` rather than capturing an immutable snapshot
-    /// of `self` at fork time.  As a result, mutations to `self` after the
-    /// fork may be visible in the child unless they are shadowed by the
-    /// child's own edits, and child mutations are not applied back to `self`.
+    /// Captures an immutable snapshot of `self` at the time of the call.  The
+    /// returned branch starts with that snapshot as its base and accumulates
+    /// its own independent delta log.  Mutations to `self` after the fork are
+    /// **not** visible in the child, and child mutations are not applied back
+    /// to `self`.
     ///
     /// # Panics
     ///
     /// The default implementation panics unconditionally.  All concrete
-    /// branch types inside this crate override this method via
-    /// `Arc::new_cyclic`; external implementations that do not override
-    /// it will panic if called.
+    /// branch types inside this crate override this method; external
+    /// implementations that do not override it will panic if called.
     fn fork(&self) -> std::sync::Arc<dyn Branch> {
-        unimplemented!("fork requires Arc::new_cyclic construction; see redwing docs")
+        unimplemented!("fork requires a concrete Branch implementation; see redwing docs")
     }
 }

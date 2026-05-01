@@ -1421,3 +1421,48 @@ fn splice_chained_calls_compose_correctly() {
     ds.read_at(0, &mut buf).unwrap();
     assert_eq!(&buf, b"the slow brown cat");
 }
+
+// ── fork isolation ─────────────────────────────────────────────────────────
+
+/// Mutations to the parent after `fork()` must not be visible in the child.
+#[test]
+fn fork_parent_mutation_not_visible_in_child() {
+    let parent = owning_ds(b"hello");
+    let child = parent.fork();
+    // Mutate parent after forking.
+    parent.overwrite(0, b"HELLO").unwrap();
+    // Child should still see the original snapshot content.
+    let mut buf = [0u8; 5];
+    child.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"hello");
+}
+
+/// Mutations to the child after `fork()` must not be visible in the parent.
+#[test]
+fn fork_child_mutation_not_visible_in_parent() {
+    let parent = owning_ds(b"world");
+    let child = parent.fork();
+    // Mutate child after forking.
+    child.overwrite(0, b"WORLD").unwrap();
+    // Parent should still see its own unmodified content.
+    let mut buf = [0u8; 5];
+    parent.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"world");
+}
+
+/// The child starts with the content of the parent at the time of the fork.
+#[test]
+fn fork_child_starts_with_parent_snapshot() {
+    let parent = owning_ds(b"base");
+    // Mutate parent before forking.
+    parent.overwrite(0, b"EDIT").unwrap();
+    let child = parent.fork();
+    // Child should see the edited content, not the original.
+    let mut buf = [0u8; 4];
+    child.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"EDIT");
+    // Further parent mutation must not affect child.
+    parent.overwrite(0, b"CHNG").unwrap();
+    child.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"EDIT");
+}

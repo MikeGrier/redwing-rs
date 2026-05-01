@@ -3,7 +3,7 @@
 use std::{
     cell::RefCell,
     io,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
 use crate::{
@@ -24,6 +24,9 @@ use crate::{
 /// to any serialised Branch chain.
 pub(crate) enum BranchParent {
     Base(Arc<BaseBranch>),
+    /// Used by [`DerivedBranch::derive_from_derived`] in tests; kept to cover
+    /// the `Derived` path in `byte_len`/`read_at`.
+    #[allow(dead_code)]
     Derived(Arc<dyn Branch>),
 }
 
@@ -52,10 +55,6 @@ impl BranchParent {
 /// through the `Arc<dyn Branch>` handle produced by `fork()` and the
 /// `make_thicket_from_*` entry-point functions.
 pub(crate) struct DerivedBranch {
-    /// Weak self-reference, set during construction via `Arc::new_cyclic`.
-    /// Used by `Branch::fork` to produce an `Arc<dyn Branch>` without
-    /// an external handle.
-    pub(crate) this: Weak<DerivedBranch>,
     /// The Branch this one was derived from.
     pub(crate) parent: Arc<BranchParent>,
     /// Delta log: mutations applied on top of `parent`, in order.
@@ -69,22 +68,23 @@ impl DerivedBranch {
     /// Derive a new, empty Branch from a `BaseBranch`.
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn derive_from_base(parent: Arc<BaseBranch>) -> Arc<Self> {
-        Arc::new_cyclic(|weak| Self {
-            this: weak.clone(),
+        Arc::new(Self {
             parent: Arc::new(BranchParent::Base(parent)),
             log: RefCell::new(Vec::new()),
             table: RefCell::new(None),
         })
     }
 
-    /// Fork a new, empty Branch layered on top of any existing Branch.
+    /// Build a derived branch layered on top of any existing Branch.
     ///
-    /// Called by the public `Branch::fork()` API.  Accepts `Arc<dyn
-    /// Branch>` so the caller does not need to know the concrete type.
+    /// Not called by production code — `Branch::fork` now snapshots the parent
+    /// into a `BaseBranch`.  Kept as a `pub(crate)` constructor so that unit
+    /// tests can exercise the `BranchParent::Derived` path in `byte_len` and
+    /// `read_at` directly.
+    #[allow(dead_code)]
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn derive_from_derived(parent: Arc<dyn Branch>) -> Arc<Self> {
-        Arc::new_cyclic(|weak| Self {
-            this: weak.clone(),
+        Arc::new(Self {
             parent: Arc::new(BranchParent::Derived(parent)),
             log: RefCell::new(Vec::new()),
             table: RefCell::new(None),
@@ -472,10 +472,12 @@ impl Branch for DerivedBranch {
     }
 
     fn fork(&self) -> std::sync::Arc<dyn crate::branch::Branch> {
-        let arc = self.this.upgrade().expect(
-            "DerivedBranch::fork called on a stack-allocated value; use Arc::new_cyclic at construction time",
-        );
-        DerivedBranch::derive_from_derived(arc)
+        // Snapshot the current content into an immutable BaseBranch so that
+        // subsequent mutations to `self` are not visible in the child.
+        let bytes = crate::materialize::materialize(self)
+            .expect("fork: failed to materialize branch snapshot");
+        let snapshot = crate::base_branch::BaseBranch::from_bytes(bytes).into_arc();
+        DerivedBranch::derive_from_base(snapshot)
     }
 }
 
