@@ -598,7 +598,7 @@ fn flatten_agrees_with_materialize_on_every_byte() {
 // ── M7-6: bytes_equal ──────────────────────────────────────────────────
 
 #[test]
-fn bytes_equal_two_identical_base_branchs() {
+fn bytes_equal_two_identical_base_branches() {
     let a = thicket(b"Hello");
     let b = thicket(b"Hello");
     assert!(bytes_equal(&*a, &*b).unwrap());
