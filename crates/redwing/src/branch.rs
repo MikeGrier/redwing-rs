@@ -26,7 +26,7 @@ impl<T: Read + Seek> ReadSeek for T {}
 ///
 /// Use [`crate::make_thicket_from_bytes`] (or the related entry-point
 /// functions) to create the first Branch in a thicket.  Use
-/// [`branch::derive`] to branch off a new writable Branch from any
+/// [`Branch::fork`] to branch off a new writable Branch from any
 /// existing one.
 ///
 /// Changing this trait (adding or removing methods, or changing any signature)
