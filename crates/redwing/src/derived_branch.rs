@@ -109,8 +109,10 @@ impl DerivedBranch {
     ///
     /// Worst-case `O(k²)` in `k = log.len() - suffix_start`: each pass scans
     /// the suffix, and the range may grow by only one entry per pass.  In
-    /// practice `k` is small because `DerivedBranch::overwrite` collapses the
-    /// suffix back into a single entry on every call.
+    /// practice `k` is often small because `DerivedBranch::overwrite` merges
+    /// the connected overwrite region it touches into a single entry, though
+    /// disjoint overwrite entries in the suffix may remain and allow `k` to
+    /// grow.
     fn grow_merge_range(&self, suffix_start: usize, start: u64, end: u64) -> (u64, u64) {
         let mut m_start = start;
         let mut m_end = end;
