@@ -79,7 +79,7 @@ impl DerivedBranch {
 
     /// Fork a new, empty Branch layered on top of any existing Branch.
     ///
-    /// Called by the public `fork()` free function.  Accepts `Arc<dyn
+    /// Called by the public `Branch::fork()` API.  Accepts `Arc<dyn
     /// Branch>` so the caller does not need to know the concrete type.
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn derive_from_derived(parent: Arc<dyn Branch>) -> Arc<Self> {
