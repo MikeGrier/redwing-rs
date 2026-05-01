@@ -150,9 +150,11 @@ pub trait Branch {
 
     /// Create a new, empty branch forked from this one.
     ///
-    /// The returned branch starts with the same content as `self` but
-    /// accumulates its own independent delta log.  Mutations to `self`
-    /// after the fork are **not** visible in the child, and vice-versa.
+    /// The returned branch accumulates its own independent delta log, but it
+    /// remains derived from `self` rather than capturing an immutable snapshot
+    /// of `self` at fork time.  As a result, mutations to `self` after the
+    /// fork may be visible in the child unless they are shadowed by the
+    /// child's own edits, and child mutations are not applied back to `self`.
     ///
     /// # Panics
     ///
