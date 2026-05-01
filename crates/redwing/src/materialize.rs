@@ -2,7 +2,7 @@
 
 use std::{io, sync::Arc};
 
-use crate::branch::Branch;
+use crate::{branch::Branch, error::BranchError};
 
 /// Read the entire byte stream of `src` into a newly-allocated [`Vec<u8>`].
 ///
@@ -22,21 +22,13 @@ use crate::branch::Branch;
 ///   read (indicates a contract violation in the `ByteSource` impl).
 pub fn materialize(src: &dyn Branch) -> io::Result<Vec<u8>> {
     let len = src.byte_len();
-    let size = usize::try_from(len).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "branch too large to materialize on this platform",
-        )
-    })?;
+    let size = usize::try_from(len).map_err(|_| io::Error::from(BranchError::BranchTooLarge))?;
     let mut buf = vec![0u8; size];
     let mut off: u64 = 0;
     while off < len {
         let n = src.read_at(off, &mut buf[off as usize..])?;
         if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "read_at returned 0 before end of branch",
-            ));
+            return Err(BranchError::UnexpectedEof.into());
         }
         off += n as u64;
     }
@@ -60,30 +52,17 @@ pub fn materialize(src: &dyn Branch) -> io::Result<Vec<u8>> {
 /// - Any error returned by `src.read_at`.
 /// - `UnexpectedEof` if `read_at` returns `Ok(0)` before `len` bytes are read.
 pub fn materialize_range(src: &dyn Branch, offset: u64, len: u64) -> io::Result<Vec<u8>> {
-    let end = offset
-        .checked_add(len)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset + len overflows u64"))?;
+    let end = offset.checked_add(len).ok_or(BranchError::OffsetOverflow)?;
     if end > src.byte_len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "range exceeds branch length",
-        ));
+        return Err(BranchError::OutOfBounds.into());
     }
-    let size = usize::try_from(len).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "range too large to materialize on this platform",
-        )
-    })?;
+    let size = usize::try_from(len).map_err(|_| io::Error::from(BranchError::BranchTooLarge))?;
     let mut buf = vec![0u8; size];
     let mut filled: usize = 0;
     while filled < size {
         let n = src.read_at(offset + filled as u64, &mut buf[filled..])?;
         if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "read_at returned 0 before range was fully read",
-            ));
+            return Err(BranchError::UnexpectedEof.into());
         }
         filled += n;
     }
@@ -133,10 +112,7 @@ pub fn bytes_equal(a: &dyn Branch, b: &dyn Branch) -> io::Result<bool> {
         while filled_a < remaining {
             let n = a.read_at(offset + filled_a as u64, &mut buf_a[filled_a..remaining])?;
             if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "read_at returned 0 before end of Branch",
-                ));
+                return Err(BranchError::UnexpectedEof.into());
             }
             filled_a += n;
         }
@@ -144,10 +120,7 @@ pub fn bytes_equal(a: &dyn Branch, b: &dyn Branch) -> io::Result<bool> {
         while filled_b < remaining {
             let n = b.read_at(offset + filled_b as u64, &mut buf_b[filled_b..remaining])?;
             if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "read_at returned 0 before end of branch",
-                ));
+                return Err(BranchError::UnexpectedEof.into());
             }
             filled_b += n;
         }

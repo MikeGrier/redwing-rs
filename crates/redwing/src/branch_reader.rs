@@ -2,6 +2,8 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 
+use crate::error::BranchError;
+
 /// Positional read interface shared by all Branch types.
 ///
 /// Both `byte_len` and `read_at` are already provided by `BaseBranch` and
@@ -29,10 +31,7 @@ pub trait ByteSource {
     #[allow(dead_code)]
     fn read_byte(&self, offset: u64) -> io::Result<u8> {
         if offset >= self.byte_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "read_byte: offset out of bounds",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
         let mut buf = [0u8; 1];
         self.read_at(offset, &mut buf)?;

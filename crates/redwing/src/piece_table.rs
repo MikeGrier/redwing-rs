@@ -57,10 +57,22 @@ impl Piece {
 /// An ordered list of byte-range spans describing the current content of a
 /// Branch, built by replaying a `&[Delta]` log over a parent byte stream.
 ///
+/// # Inline buffer growth
+///
 /// The `inline` buffer accumulates all bytes from `Insert` and `Overwrite`
-/// payloads in arrival order. `Piece::Inline` entries index into it via
-/// `data_offset`. Unreferenced bytes in `inline` (from superseded overwrites)
-/// are retained but never re-exposed.
+/// payloads in arrival order.  `Piece::Inline` entries index into it via
+/// `data_offset`.  The buffer is **append-only**: once bytes are appended
+/// they are never reordered or freed, even when a later delta supersedes
+/// them (for example, when the same region is overwritten repeatedly the
+/// older payloads stay in `inline` even though no `Piece::Inline` entry
+/// references them).
+///
+/// In practice this is bounded by the [`crate::derived_branch::DerivedBranch`]
+/// merge logic, which collapses overlapping `Overwrite` and consecutive
+/// `Insert` deltas in the log itself before they ever reach a piece table
+/// rebuild.  For workloads that defeat those merges (many small,
+/// non-adjacent writes), call [`crate::flatten`] to collapse a branch into
+/// a fresh `BaseBranch` and reclaim the unreferenced inline bytes.
 pub(crate) struct PieceTable {
     /// Ordered spans that together describe the full byte content.
     pub(crate) pieces: Vec<Piece>,

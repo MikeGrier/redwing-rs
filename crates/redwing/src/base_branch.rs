@@ -10,6 +10,7 @@ use memmap2::Mmap;
 use crate::{
     branch::{Branch, ReadSeek},
     branch_reader::{BranchReader, ByteSource},
+    error::BranchError,
 };
 
 /// Storage backing for a `BaseBranch`.
@@ -174,50 +175,35 @@ impl Branch for BaseBranch {
         if bytes.is_empty() {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "BaseBranch is read-only",
-        ))
+        Err(BranchError::ReadOnly.into())
     }
 
     fn insert_before(&self, _offset: u64, bytes: &[u8]) -> io::Result<()> {
         if bytes.is_empty() {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "BaseBranch is read-only",
-        ))
+        Err(BranchError::ReadOnly.into())
     }
 
     fn delete(&self, _offset: u64, len: u64) -> io::Result<()> {
         if len == 0 {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "BaseBranch is read-only",
-        ))
+        Err(BranchError::ReadOnly.into())
     }
 
     fn append(&self, bytes: &[u8]) -> io::Result<()> {
         if bytes.is_empty() {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "BaseBranch is read-only",
-        ))
+        Err(BranchError::ReadOnly.into())
     }
 
     fn truncate(&self, new_len: u64) -> io::Result<()> {
         if new_len == self.byte_len() {
             return Ok(());
         }
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "BaseBranch is read-only",
-        ))
+        Err(BranchError::ReadOnly.into())
     }
 
     /// Identity mapping: a `BaseBranch` has no parent, so any in-bounds

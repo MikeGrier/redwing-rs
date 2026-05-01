@@ -2,6 +2,8 @@
 
 use std::io::{self, Read, Seek};
 
+use crate::error::BranchError;
+
 /// A combined `Read + Seek` trait object used as the return type of
 /// [`branch::as_reader`].
 ///
@@ -49,10 +51,7 @@ pub trait Branch {
     /// pattern.
     fn read_byte(&self, offset: u64) -> io::Result<u8> {
         if offset >= self.byte_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "read_byte: offset out of bounds",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
         let mut buf = [0u8; 1];
         self.read_at(offset, &mut buf)?;
@@ -156,12 +155,12 @@ pub trait Branch {
     /// **not** visible in the child, and child mutations are not applied back
     /// to `self`.
     ///
-    /// # Panics
+    /// # Implementation requirement
     ///
-    /// The default implementation panics unconditionally.  All concrete
-    /// branch types inside this crate override this method; external
-    /// implementations that do not override it will panic if called.
-    fn fork(&self) -> std::sync::Arc<dyn Branch> {
-        unimplemented!("fork requires a concrete Branch implementation; see redwing docs")
-    }
+    /// This method has no default body: every concrete `Branch` must supply
+    /// its own implementation.  The crate-internal types use
+    /// `Arc::new_cyclic` so that a `&self` reference can recover its owning
+    /// `Arc`; external implementations must do something equivalent.
+    #[must_use = "a forked branch is independent and is dropped if not stored"]
+    fn fork(&self) -> std::sync::Arc<dyn Branch>;
 }

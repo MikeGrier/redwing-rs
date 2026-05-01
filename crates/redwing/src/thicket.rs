@@ -22,6 +22,7 @@ impl Thicket {
     /// state as the `Thicket`, so mutations performed through either handle
     /// may be observed through the other. Pass the result to
     /// [`Branch::fork`] to create additional writable branches.
+    #[must_use]
     pub fn main(&self) -> Arc<dyn Branch> {
         self.0.clone()
     }
@@ -34,6 +35,7 @@ impl Thicket {
 /// the caller already holds an `Arc<[u8]>`, this is a zero-copy operation.
 ///
 /// Call [`Thicket::main`] on the result to obtain an `Arc<dyn Branch>`.
+#[must_use = "a thicket owns the branch tree and is dropped if not stored"]
 pub fn make_thicket_from_bytes(data: impl Into<Arc<[u8]>>) -> Thicket {
     let base = BaseBranch::from_bytes(data).into_arc();
     Thicket(DerivedBranch::derive_from_base(base))
@@ -59,6 +61,7 @@ pub fn make_thicket_from_reader(r: impl Read + Seek) -> io::Result<Thicket> {
 /// delta log.
 ///
 /// Call [`Thicket::main`] on the result to obtain an `Arc<dyn Branch>`.
+#[must_use = "a thicket owns the branch tree and is dropped if not stored"]
 pub fn make_thicket_from_mmap(mmap: Mmap) -> Thicket {
     let base = BaseBranch::from_mmap(mmap).into_arc();
     Thicket(DerivedBranch::derive_from_base(base))

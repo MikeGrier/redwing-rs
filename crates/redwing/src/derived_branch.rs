@@ -11,6 +11,7 @@ use crate::{
     branch::{Branch, ReadSeek},
     branch_reader::BranchReader,
     delta::Delta,
+    error::BranchError,
     piece_table::PieceTable,
 };
 
@@ -70,6 +71,74 @@ pub(crate) struct DerivedBranch {
 }
 
 impl DerivedBranch {
+    /// Compute `offset + len` as a `u64`, returning [`BranchError::OffsetOverflow`]
+    /// when the addition wraps.
+    ///
+    /// `len` is taken as `u64` so the same helper serves callers that begin
+    /// with `bytes.len() as u64` and callers that already hold a `u64` length.
+    fn checked_end(offset: u64, len: u64) -> io::Result<u64> {
+        offset
+            .checked_add(len)
+            .ok_or_else(|| BranchError::OffsetOverflow.into())
+    }
+
+    /// Index of the first entry in the trailing overwrite-only suffix of the
+    /// delta log.
+    ///
+    /// Returns `log.len()` when the log is empty or its last entry is not an
+    /// `Overwrite`. Returns `0` when every entry is an `Overwrite`. Otherwise
+    /// returns one past the index of the most recent non-`Overwrite` entry,
+    /// since `Insert` and `Delete` entries shift the coordinate space and
+    /// therefore form a hard boundary that overwrite merging cannot cross.
+    fn find_overwrite_suffix_start(&self) -> usize {
+        let log = self.log.borrow();
+        log.iter()
+            .rposition(|d| !matches!(d, Delta::Overwrite { .. }))
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    }
+
+    /// Grow `[start, end)` to a fixed point by unioning every overlapping or
+    /// adjacent `Overwrite` entry in `self.log[suffix_start..]`.
+    ///
+    /// The loop terminates when a full pass produces no change.  A single pass
+    /// is insufficient because absorbing one entry may extend the range so that
+    /// it now touches a previously disjoint entry.
+    ///
+    /// # Complexity
+    ///
+    /// Worst-case `O(k²)` in `k = log.len() - suffix_start`: each pass scans
+    /// the suffix, and the range may grow by only one entry per pass.  In
+    /// practice `k` is small because `DerivedBranch::overwrite` collapses the
+    /// suffix back into a single entry on every call.
+    fn grow_merge_range(&self, suffix_start: usize, start: u64, end: u64) -> (u64, u64) {
+        let mut m_start = start;
+        let mut m_end = end;
+        loop {
+            let prev_start = m_start;
+            let prev_end = m_end;
+            {
+                let log = self.log.borrow();
+                for d in &(*log)[suffix_start..] {
+                    if let Delta::Overwrite {
+                        offset: o,
+                        bytes: b,
+                    } = d
+                    {
+                        let o_end = o + b.len() as u64;
+                        if *o <= m_end && m_start <= o_end {
+                            m_start = m_start.min(*o);
+                            m_end = m_end.max(o_end);
+                        }
+                    }
+                }
+            }
+            if m_start == prev_start && m_end == prev_end {
+                return (m_start, m_end);
+            }
+        }
+    }
+
     /// Derive a new, empty Branch from a `BaseBranch`.
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn derive_from_base(parent: Arc<BaseBranch>) -> Arc<Self> {
@@ -147,59 +216,72 @@ impl DerivedBranch {
     /// Only `Overwrite` entries are eligible — an `Insert` or `Delete` anywhere
     /// in the log creates a suffix boundary because it shifts the coordinate
     /// space used by all subsequent deltas.
+    ///
+    /// # Invariants preserved by the helpers
+    ///
+    /// 1. **Suffix boundary.** [`find_overwrite_suffix_start`] returns an index
+    ///    strictly past the most recent coordinate-shifting delta (`Insert` or
+    ///    `Delete`).  Nothing the merge does crosses that boundary, so deltas
+    ///    before it remain untouched and in their original relative order.
+    /// 2. **Suffix homogeneity.** Every entry in `self.log[suffix_start..]`
+    ///    is — and remains — a `Delta::Overwrite`.  Both `grow_merge_range`
+    ///    and [`rebuild_merged_overwrite`] rely on this; the merged entry that
+    ///    `rebuild_merged_overwrite` pushes is itself an `Overwrite`, so the
+    ///    invariant holds for subsequent calls.
+    /// 3. **Stable partition.** Surviving (disjoint) entries keep their
+    ///    original relative order via `Vec::partition`, and the single merged
+    ///    entry is appended at the end of the suffix.  Replays of the log
+    ///    therefore observe overlapping writes in their original chronological
+    ///    order, which is what makes "newest write wins" correct.
     pub fn overwrite(&self, offset: u64, bytes: &[u8]) -> io::Result<()> {
         if bytes.is_empty() {
             return Ok(());
         }
-        let end = offset
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let end = Self::checked_end(offset, bytes.len() as u64)?;
         if end > self.byte_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "overwrite range exceeds branch length",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
 
         // Find the start of the trailing overwrite-only suffix.  Entries before
         // this index involve coordinate-space shifts and cannot be merged.
-        let suffix_start = {
-            let log = self.log.borrow();
-            log.iter()
-                .rposition(|d| !matches!(d, Delta::Overwrite { .. }))
-                .map(|i| i + 1)
-                .unwrap_or(0)
-        };
+        let suffix_start = self.find_overwrite_suffix_start();
 
         // Fixed-point: grow the merged range until it no longer absorbs any new
         // suffix entry.  A single pass may miss entries that only become
         // adjacent after an earlier absorption expands the range.
-        let mut m_start = offset;
-        let mut m_end = end;
-        loop {
-            let prev_start = m_start;
-            let prev_end = m_end;
-            {
-                let log = self.log.borrow();
-                for d in &(*log)[suffix_start..] {
-                    if let Delta::Overwrite {
-                        offset: o,
-                        bytes: b,
-                    } = d
-                    {
-                        let o_end = o + b.len() as u64;
-                        if *o <= m_end && m_start <= o_end {
-                            m_start = m_start.min(*o);
-                            m_end = m_end.max(o_end);
-                        }
-                    }
-                }
-            }
-            if m_start == prev_start && m_end == prev_end {
-                break;
-            }
-        }
+        let (m_start, m_end) = self.grow_merge_range(suffix_start, offset, end);
 
+        self.rebuild_merged_overwrite(suffix_start, offset, bytes, m_start, m_end);
+        *self.table.borrow_mut() = None;
+        Ok(())
+    }
+
+    /// Replace `self.log[suffix_start..]` with the surviving (disjoint)
+    /// entries followed by a single merged `Overwrite` covering
+    /// `[m_start, m_end)`.
+    ///
+    /// The merged buffer is built by applying every absorbed entry in original
+    /// log order (so chronologically later writes overwrite earlier ones in
+    /// the overlap region), then applying the new `(new_offset, new_bytes)`
+    /// write last so that it wins over everything.  Surviving entries — those
+    /// whose ranges lie entirely outside `[m_start, m_end)` — are preserved in
+    /// their original relative order via `Vec::partition`.
+    ///
+    /// Preconditions (upheld by the caller):
+    ///
+    /// * `suffix_start <= self.log.borrow().len()`
+    /// * Every entry in `self.log[suffix_start..]` is a `Delta::Overwrite`.
+    /// * `[new_offset, new_offset + new_bytes.len()) ⊆ [m_start, m_end)`.
+    /// * `(m_start, m_end)` is the fixed point of `grow_merge_range` for the
+    ///   same suffix and request.
+    fn rebuild_merged_overwrite(
+        &self,
+        suffix_start: usize,
+        new_offset: u64,
+        new_bytes: &[u8],
+        m_start: u64,
+        m_end: u64,
+    ) {
         // Drain the suffix and split: absorbed entries fall within the merged
         // range; surviving entries lie entirely outside it.
         let suffix: Vec<Delta> = self.log.borrow_mut().drain(suffix_start..).collect();
@@ -230,21 +312,17 @@ impl DerivedBranch {
                 merged[buf_off..buf_off + b.len()].copy_from_slice(b);
             }
         }
-        let n_off = (offset - m_start) as usize;
-        merged[n_off..n_off + bytes.len()].copy_from_slice(bytes);
+        let n_off = (new_offset - m_start) as usize;
+        merged[n_off..n_off + new_bytes.len()].copy_from_slice(new_bytes);
 
         // Re-append surviving entries (they are disjoint from the merged range)
         // followed by the single merged entry.
-        {
-            let mut log = self.log.borrow_mut();
-            log.extend(surviving);
-            log.push(Delta::Overwrite {
-                offset: m_start,
-                bytes: merged,
-            });
-        }
-        *self.table.borrow_mut() = None;
-        Ok(())
+        let mut log = self.log.borrow_mut();
+        log.extend(surviving);
+        log.push(Delta::Overwrite {
+            offset: m_start,
+            bytes: merged,
+        });
     }
 
     /// Insert `bytes` before the byte currently at `offset`.
@@ -264,10 +342,7 @@ impl DerivedBranch {
             return Ok(());
         }
         if offset > self.byte_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "insert offset exceeds branch length",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
         // Attempt to merge with the previous log entry.
         let merge_info: Option<(u64, Vec<u8>)> = {
@@ -329,14 +404,9 @@ impl DerivedBranch {
         if len == 0 {
             return Ok(());
         }
-        let end = offset
-            .checked_add(len)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+        let end = Self::checked_end(offset, len)?;
         if end > self.byte_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "delete range exceeds branch length",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
         self.log.borrow_mut().push(Delta::Delete { offset, len });
         *self.table.borrow_mut() = None;
@@ -351,10 +421,7 @@ impl DerivedBranch {
     pub fn truncate(&self, new_len: u64) -> io::Result<()> {
         let current = self.byte_len();
         if new_len > current {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "truncate: new_len exceeds branch length",
-            ));
+            return Err(BranchError::OutOfBounds.into());
         }
         self.delete(new_len, current - new_len)
     }

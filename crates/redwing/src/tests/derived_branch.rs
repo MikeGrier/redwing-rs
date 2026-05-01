@@ -1466,3 +1466,130 @@ fn fork_child_starts_with_parent_snapshot() {
     child.read_at(0, &mut buf).unwrap();
     assert_eq!(&buf, b"EDIT");
 }
+
+// ── helper: find_overwrite_suffix_start ───────────────────────────────────
+
+/// Build a `DerivedBranch` whose log is replaced by exactly `deltas`.
+/// The piece-table cache is left unset so the next read rebuilds it.
+fn db_with_log(parent_len: usize, deltas: Vec<Delta>) -> Arc<DerivedBranch> {
+    let parent = vec![b'A'; parent_len];
+    let db = DerivedBranch::derive_from_base(base_arc(&parent));
+    *db.log.borrow_mut() = deltas;
+    db
+}
+
+#[test]
+fn find_overwrite_suffix_start_empty_log_is_zero() {
+    let db = db_with_log(8, vec![]);
+    assert_eq!(db.find_overwrite_suffix_start(), 0);
+}
+
+#[test]
+fn find_overwrite_suffix_start_all_overwrites_is_zero() {
+    let db = db_with_log(
+        8,
+        vec![
+            Delta::Overwrite { offset: 0, bytes: vec![1] },
+            Delta::Overwrite { offset: 2, bytes: vec![2] },
+            Delta::Overwrite { offset: 4, bytes: vec![3] },
+        ],
+    );
+    assert_eq!(db.find_overwrite_suffix_start(), 0);
+}
+
+#[test]
+fn find_overwrite_suffix_start_after_last_non_overwrite() {
+    // Layout: [Overwrite, Insert, Overwrite, Overwrite]
+    //                       ^ last non-overwrite at index 1
+    let db = db_with_log(
+        8,
+        vec![
+            Delta::Overwrite { offset: 0, bytes: vec![1] },
+            Delta::Insert { offset: 2, bytes: vec![9] },
+            Delta::Overwrite { offset: 5, bytes: vec![2] },
+            Delta::Overwrite { offset: 7, bytes: vec![3] },
+        ],
+    );
+    assert_eq!(db.find_overwrite_suffix_start(), 2);
+}
+
+#[test]
+fn find_overwrite_suffix_start_trailing_delete_returns_log_len() {
+    let db = db_with_log(
+        8,
+        vec![
+            Delta::Overwrite { offset: 0, bytes: vec![1] },
+            Delta::Delete { offset: 4, len: 1 },
+        ],
+    );
+    assert_eq!(db.find_overwrite_suffix_start(), 2);
+}
+
+// ── helper: grow_merge_range ──────────────────────────────────────────────
+
+#[test]
+fn grow_merge_range_disjoint_returns_unchanged() {
+    let db = db_with_log(
+        100,
+        vec![
+            Delta::Overwrite { offset: 0, bytes: vec![1, 1] },   // [0, 2)
+            Delta::Overwrite { offset: 80, bytes: vec![2, 2] },  // [80, 82)
+        ],
+    );
+    // New write at [40, 42): touches neither suffix entry.
+    assert_eq!(db.grow_merge_range(0, 40, 42), (40, 42));
+}
+
+#[test]
+fn grow_merge_range_one_overlapping_entry_unions() {
+    let db = db_with_log(
+        100,
+        vec![Delta::Overwrite { offset: 10, bytes: vec![0; 10] }], // [10, 20)
+    );
+    // New write [15, 25) overlaps [10, 20) → union [10, 25).
+    assert_eq!(db.grow_merge_range(0, 15, 25), (10, 25));
+}
+
+#[test]
+fn grow_merge_range_adjacent_entry_unions() {
+    let db = db_with_log(
+        100,
+        vec![Delta::Overwrite { offset: 10, bytes: vec![0; 5] }], // [10, 15)
+    );
+    // New write [15, 20) is exactly adjacent → union [10, 20).
+    assert_eq!(db.grow_merge_range(0, 15, 20), (10, 20));
+}
+
+#[test]
+fn grow_merge_range_bridging_absorbs_both_via_fixed_point() {
+    // Two previously disjoint overwrites that the new write bridges.  A
+    // single pass would only absorb one of them; the fixed-point loop must
+    // expand the merged range and re-scan to pick up the second.
+    let db = db_with_log(
+        100,
+        vec![
+            Delta::Overwrite { offset: 10, bytes: vec![0; 5] }, // [10, 15)
+            Delta::Overwrite { offset: 25, bytes: vec![0; 5] }, // [25, 30)
+        ],
+    );
+    // New write [14, 26) overlaps the first directly and reaches the second
+    // only after the merged range is grown.
+    assert_eq!(db.grow_merge_range(0, 14, 26), (10, 30));
+}
+
+#[test]
+fn grow_merge_range_respects_suffix_start() {
+    // Overwrite at [10, 15) lives before the suffix boundary and must be
+    // ignored by the merge.
+    let db = db_with_log(
+        100,
+        vec![
+            Delta::Overwrite { offset: 10, bytes: vec![0; 5] },
+            Delta::Insert { offset: 50, bytes: vec![9] }, // suffix boundary
+            Delta::Overwrite { offset: 60, bytes: vec![0; 5] }, // [60, 65)
+        ],
+    );
+    // suffix_start = 2 → only [60, 65) is eligible.  New write [12, 18)
+    // would have unioned with [10, 15) if the boundary were ignored.
+    assert_eq!(db.grow_merge_range(2, 12, 18), (12, 18));
+}
