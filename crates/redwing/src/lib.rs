@@ -13,9 +13,9 @@
 //! mutate state through `RefCell`-backed interior mutability.  The concrete
 //! branch types are intentionally not `Send` or `Sync`; sharing an
 //! `Arc<dyn Branch>` between threads will fail to compile.  If you need to
-//! cross a thread boundary, [`flatten`] a branch into a fresh `BaseBranch`
-//! handle on the receiving thread, or guard the entire branch tree behind a
-//! `Mutex` you own.
+//! cross a thread boundary, call [`materialize`] on the source thread to
+//! produce a `Vec<u8>`, send those bytes to the destination thread, and then
+//! build a fresh branch tree there with [`make_thicket_from_bytes`].
 //!
 //! Implementors of `Branch` outside this crate must respect the same
 //! contract: assume `&self` reads and writes happen serially within a single
