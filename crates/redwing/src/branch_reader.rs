@@ -80,6 +80,12 @@ impl<S: ByteSource> Seek for BranchReader<'_, S> {
                 "seek before beginning of Branch",
             ));
         }
+        if new_pos > u64::MAX as i128 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek beyond maximum Branch position",
+            ));
+        }
         self.pos = new_pos as u64;
         Ok(self.pos)
     }
