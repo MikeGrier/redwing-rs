@@ -229,10 +229,11 @@ impl DerivedBranch {
     ///    `rebuild_merged_overwrite` pushes is itself an `Overwrite`, so the
     ///    invariant holds for subsequent calls.
     /// 3. **Stable partition.** Surviving (disjoint) entries keep their
-    ///    original relative order via `Vec::partition`, and the single merged
-    ///    entry is appended at the end of the suffix.  Replays of the log
-    ///    therefore observe overlapping writes in their original chronological
-    ///    order, which is what makes "newest write wins" correct.
+    ///    original relative order via `Iterator::partition` on the suffix
+    ///    iterator, and the single merged entry is appended at the end of the
+    ///    suffix. Replays of the log therefore observe overlapping writes in
+    ///    their original chronological order, which is what makes "newest
+    ///    write wins" correct.
     pub fn overwrite(&self, offset: u64, bytes: &[u8]) -> io::Result<()> {
         if bytes.is_empty() {
             return Ok(());
