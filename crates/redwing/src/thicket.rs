@@ -18,8 +18,9 @@ pub struct Thicket(Arc<dyn Branch>);
 impl Thicket {
     /// Return the main Branch of this thicket.
     ///
-    /// The returned handle shares ownership with the `Thicket`; neither can
-    /// observe the other's future mutations.  Pass the result to
+    /// The returned handle shares ownership of the same underlying Branch
+    /// state as the `Thicket`, so mutations performed through either handle
+    /// may be observed through the other. Pass the result to
     /// [`Branch::fork`] to create additional writable branches.
     pub fn main(&self) -> Arc<dyn Branch> {
         self.0.clone()
