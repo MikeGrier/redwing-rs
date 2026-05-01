@@ -71,8 +71,8 @@ impl Piece {
 /// merge logic, which collapses overlapping `Overwrite` and consecutive
 /// `Insert` deltas in the log itself before they ever reach a piece table
 /// rebuild.  For workloads that defeat those merges (many small,
-/// non-adjacent writes), call [`crate::flatten`] to collapse a branch into
-/// a fresh `BaseBranch` and reclaim the unreferenced inline bytes.
+/// non-adjacent writes), call [`crate::flatten`] to rebuild the branch tree
+/// on top of a fresh base and reclaim the unreferenced inline bytes.
 pub(crate) struct PieceTable {
     /// Ordered spans that together describe the full byte content.
     pub(crate) pieces: Vec<Piece>,
