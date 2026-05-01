@@ -660,7 +660,7 @@ fn bytes_equal_base_vs_derived_with_overwrite_returns_false() {
 }
 
 #[test]
-fn bytes_equal_large_equal_branchs_returns_true() {
+fn bytes_equal_large_equal_branches_returns_true() {
     let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
     let a = crate::make_thicket_from_bytes(data.clone()).main();
     let b = crate::make_thicket_from_bytes(data).main();
