@@ -1,8 +1,8 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+# Copyright (c) 2026, Michael Grier
 
 [package]
 name = "redwing"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 description = "A copy-on-write, branching byte-stream library backed by a piece table and delta log."
 license = "MIT"

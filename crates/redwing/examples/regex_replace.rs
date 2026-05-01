@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) 2026 Michael J. Grier
 
 //! regex_replace — in-place regex substitution on arbitrary byte files using
 //! the redwing thicket/branch API.
