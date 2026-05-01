@@ -59,8 +59,13 @@ pub(crate) struct DerivedBranch {
     pub(crate) parent: Arc<BranchParent>,
     /// Delta log: mutations applied on top of `parent`, in order.
     pub(crate) log: RefCell<Vec<Delta>>,
-    /// Lazily-built piece table. Set to `None` whenever `log` is extended;
-    /// rebuilt on the next call to `byte_len` or `read_at`.
+    /// Lazily-built piece table. Invalidated (set to `None`) whenever `log`
+    /// is mutated; rebuilt on the next call to `byte_len` or `read_at`.
+    ///
+    /// Parent-change tracking is not required: `derive_from_base` (the only
+    /// production constructor, called by `Branch::fork`) always receives an
+    /// immutable `BaseBranch` snapshot, so `parent.byte_len()` is fixed for
+    /// the lifetime of this branch.
     table: RefCell<Option<PieceTable>>,
 }
 
